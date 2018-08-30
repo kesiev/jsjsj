@@ -1,0 +1,605 @@
+<html>
+ <head>    
+ 	<meta name="viewport" id="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+	<script src="/socket.io/socket.io.js"></script>
+    <style>
+    BODY {
+    	font-family: Helvetica;
+    }
+    #message {    	
+    	padding:1vw;
+    	text-align: center;
+    	font-size:10vw;
+    }
+    #buttonbox, #connectionbox {
+    	text-align: center;
+    	display: none;
+    	padding:1wv;
+    }
+    #btn, #room {
+    	padding:1vw;
+    	font-size:10vw;
+    	width: 100%
+    }
+    #playerslist {
+    	position: absolute;
+    	left:3vw;
+    	right:3vw;
+    	bottom:3vw;
+    	text-align: center;
+    }
+    .playerbox {
+    	display: inline-block;
+    	padding:1vw;
+    	width:4vw;
+    	height:4vw;
+    	border:1px solid #000;
+    	text-align: center;
+    	font-style: 3vw;
+    	line-height: 4vw;
+    	overflow: hidden;
+    }
+    #log {
+    	font-size:3vw;
+    	position: absolute;
+    	left:3vw;
+    	right:3vw;
+    	bottom:18vw;
+    	text-align: center;
+    }
+    #settings {
+    	font-size:3vw;
+    	position: absolute;
+    	left:3vw;
+    	right:3vw;
+    	bottom:26vw;
+    	text-align: center;
+    	line-height:3.5vw;
+    	display: none;
+    }
+	</style>
+  </head>
+	<body onload="loaded()">
+		<div id="message"></div>
+		<div id="connectionbox"><input id="room" value="room1"></div>
+		<div id="buttonbox"><input id="btn" type="button" value="OK" onclick="buttonHit()"></div>
+		<div id="playerslist"></div>
+		<div id="settings">
+			<input type="checkbox" id="alwaysplayaudio"> Always play audio<br>
+			<input type="checkbox" id="disableblink"> Disable blink<br>
+			<input type="checkbox" id="disablevibrate"> Disable vibrate
+		</div>
+		<div id="log"></div>
+	</body>
+<script>
+
+var SECOND=1000;
+var MYID=Math.floor(Math.random()*10000);
+
+function getTime() { return (new Date()).getTime()}
+
+// ---
+
+function Warning() {
+	var out={
+		warninglevel:0,
+		running:0,
+		state:0,
+		lastChange:0,
+		threshold:0.3,
+		canvibrate:window.navigator.vibrate,
+		blink:true,
+		vibrate:true,
+		play:function(warnbg,warnfg,disableblink,disablevibrate) {
+			this.warnbg=warnbg;
+			this.warnfg=warnfg;
+			this.blink=!disableblink;
+			this.vibrate=!disablevibrate;
+			this.warninglevel=0;
+			this.lastchange=0;
+			this.running=true;
+			this.light(0);
+		},
+		stop:function() {
+			this.light(0);
+			this.warninglevel=0;
+			this.running=0;
+		},
+		level:function(level) {
+			this.warninglevel=level;
+			if (level<=this.threshold) this.light(0);
+		},
+		light:function(state) {
+			if (this.blink)
+				if (state) {
+					document.body.style.backgroundColor="#fff";
+					document.body.style.color="#000";
+				} else {
+					document.body.style.backgroundColor=this.warnbg;
+					document.body.style.color=this.warnfg;
+				}
+			if (this.vibrate&&this.canvibrate)
+				if (state) window.navigator.vibrate(100);
+			this.state=state;
+		},
+		tick:function() {
+			if (this.running)
+				if (this.warninglevel>this.threshold) {
+					var nextBlink=this.lastChange+((1-this.warninglevel)*0.2*SECOND)+(0.05*SECOND);
+					var time=getTime();
+					if (time>nextBlink) {
+						this.lastChange=time;
+						this.light(!this.state);
+					}
+				}
+		}
+	};
+	return out;
+}
+
+// ---
+
+function MotionTracker() {
+	var out={
+		threshold:100000,
+		running:0,
+		setThreshold:function(threshold) {
+			this.threshold=threshold;
+		},
+		onMotion:function(vec) {
+			var power=((vec[0]*vec[0])+(vec[1]*vec[1])+(vec[2]*vec[2]));
+			var strength=power/this.threshold;
+			document.getElementById("log").innerHTML=Math.floor(power);
+			if (strength>1) {
+				this.performer(1,true);
+				this.running=0;
+			} else this.performer(strength,false);
+		},
+		play:function(performer) {
+			this.performer=performer;
+			this.running=1;
+			this.threshold=10000;
+		},
+		stop:function() {
+			this.running=0;
+		}
+	}
+	window.addEventListener("devicemotion",function(e){
+		if (out.running)
+			out.onMotion([
+				e.acceleration.x||0,
+				e.acceleration.y||0,
+				e.acceleration.z||0
+			]);
+	});
+	return out;
+}
+
+// ---
+
+function Track() {
+	return {
+		track:[],
+		plug:function(track){
+			this.track=track;
+			this.head=0;
+			this.running=0;
+		},
+		play:function() {
+			this.startTime=getTime();
+			this.running=1;
+		},
+		stop:function() {
+			this.running=0;
+		},
+		tick:function(performer){
+			if (this.running) {
+				var time=getTime()-this.startTime;
+				while (this.track[this.head]) {
+					if (this.track[this.head].time<time) {
+						performer(this.track[this.head])
+						this.head++;
+					} else break;
+				}
+			}
+		}
+	}
+}
+
+// ---
+
+var Audio=new (window.AudioContext || window.webkitAudioContext)();
+var MainChannel=Audio.createGain();
+MainChannel.connect(Audio.destination);
+MainChannel.gain.value=0.9;
+
+function AudioPlayer() {
+	var out={
+		audios:{},
+		load:function(toload,done) {
+			var self=this;
+			if (toload.length) {
+				var load=toload.splice(0,1)[0];
+			  var request = new XMLHttpRequest();
+			  request.open('GET', load.url, true);
+			  request.responseType = 'arraybuffer';
+			  request.onload = function() {
+				Audio.decodeAudioData(request.response, function(buffer) {
+				  self.audios[load.id] = {
+				  	gainNode:Audio.createGain(),
+				  	playing:0,
+				  	data:buffer,
+				  	rate:1,
+				  	lastUpdate:0,
+				  	volume:function(value) { this.gainNode.gain.value=value; },
+				  	stop:function() {
+				  		if (this.playing) {
+				  			this.rate=1;
+				  			this.playing.stop(0);
+				  			this.playing.disconnect();
+				  			this.playing=0;
+				  		}
+				  	},
+				  	update:function(){
+				  		if (this.playing) {
+				  			var rate=this.rate-this.playing.playbackRate.value;				  			
+					  		if (Math.abs(rate)>0.1)
+					  			this.playing.playbackRate.value+=rate/4;
+					  		else
+					  			this.playing.playbackRate.value=this.rate;
+					  	}
+				  	},
+				  	play:function(looping,volume) {
+				  		this.stop();
+				  		this.initTime=Audio.currentTime;
+				  		this.playing=Audio.createBufferSource();
+				  		this.playing.buffer=this.data;
+				  		this.playing.loop=looping;
+				  		this.playing.connect(this.gainNode);
+				  		this.gainNode.gain.value=volume;
+				  		this.playing.start(0);
+				  	}
+				  };
+				  self.audios[load.id].gainNode.connect(MainChannel);
+				  self.audios[load.id].volume(1);
+				  self.load(toload,done);
+				}, function(e){
+					console.warn(e);
+					console.warn("Error with "+load.url);
+				});
+			  }
+			  request.send();
+			} else done();
+		},
+		play:function(id,looping,volume) { this.audios[id].play(looping,volume==undefined?1:volume); },
+		volume:function(id,volume) { this.audios[id].volume(volume); },
+		stop:function(id) { this.audios[id].stop(); },
+		rate:function(id,value) { this.audios[id].rate=value; },
+		stopAll:function() { for (var a in this.audios) this.stop(a); },
+		tick:function() {
+			var time=Audio.currentTime;
+			for (var a in this.audios) {
+				if (time-this.audios[a].lastUpdate>0.2) {
+					this.audios[a].lastUpdate=time;
+					this.audios[a].update();
+				}
+			}
+		}
+	}	
+	return out;
+}
+
+// ---
+
+var socket = io();
+var GameStates={
+	LOADING:0,
+	OFFLINE:1,
+	CONNECTING:2,
+	ONLINE:3,
+	PREPARING:4,
+	WAITINGPLAYERS:5,
+	READYTOGO:6,
+	PLAYING:7,
+	GAMEEND:8
+}
+var playingStatesEmoji={
+	idle:"&#127918",
+	ready:"&#127916",
+	fail:"&#127998",
+	run:"&#127939"
+}
+
+var audioplayer,track,motion,song;
+var playBack=0,songName=0;
+var room="",playingPlayers=0,otherPlayingPlayer=0,players={},playingStates={};
+var alwaysPlayAudio=0,disableBlink=0,disableVibrate=0;
+var gameState=0;
+
+/* UI */
+
+function setButton(label,state,gamestate) {
+	if (gamestate!==undefined) {
+		gameState=gamestate;
+		if (gameState<GameStates.READYTOGO)
+			document.getElementById("settings").style.display="block";
+		else {
+			alwaysPlayAudio=document.getElementById("alwaysplayaudio").checked;
+			disableBlink=document.getElementById("disableblink").checked;
+			disableVibrate=document.getElementById("disablevibrate").checked;
+			document.getElementById("settings").style.display="none";
+		}
+		if (gameState==GameStates.OFFLINE)
+			document.getElementById("connectionbox").style.display="block";
+		else {
+			room=document.getElementById("room").value;
+			document.getElementById("connectionbox").style.display="none";
+		}
+	}
+	document.getElementById("message").innerHTML=label;
+	document.getElementById("buttonbox").style.display=state?"block":"none";
+}
+
+function buttonHit() {
+	switch (gameState) {
+		case GameStates.OFFLINE:{
+			if (document.getElementById("room").value) join();
+			break;
+		}
+		case GameStates.ONLINE:{ // Game started -> preparing...
+			setButton("Okay!",false);		
+			socket.emit('data',{
+				cmd:"prepare",
+				songName:"song0",
+				track:createTrack()
+			});
+			break;
+		}
+		case GameStates.READYTOGO:{
+			setButton("Okay!",false);
+			socket.emit('data',{
+				cmd:"run",
+				player:MYID
+			});
+			break;
+		}
+		case GameStates.GAMEEND:{
+			setButton("Okay!",false);
+			socket.emit('data',{
+				cmd:"restart"
+			});
+			break;
+		}
+	}
+}
+
+/* GAME FLOW */
+
+var tracksPieces=[
+	{time:[5,15],cmd:{rate:1,threshold:150}},
+	{time:[5,15],cmd:{rate:2,threshold:300}},
+	{time:[5,15],cmd:{rate:0.5,threshold:50}}
+];
+
+function createTrack() {
+	var track=[
+		{time:0,cmd:tracksPieces[0].cmd}
+	],bag=[],piece,time=0;
+	for (var i=0;i<100;i++) {
+		if (!bag.length)
+			for (var j=0;j<tracksPieces.length;j++)
+				bag.push(j);
+		var id=Math.floor(Math.random()*bag.length);
+		piece=tracksPieces[bag[id]];
+		time+=piece.time[0]+Math.floor(Math.random()*(piece.time[1]-piece.time[0]));
+		track.push({time:time*1000,cmd:tracksPieces[bag[id]].cmd});
+		bag.splice(id,1);
+	}
+	return track;
+}
+
+function motionPerformer(strength,failed) {
+	warning.level(strength);
+	if (failed) fail();
+}
+
+function trackPerformer(a) {
+	if (a.cmd.rate!==undefined)
+		audioplayer.rate(songName,a.cmd.rate);
+	if (a.cmd.threshold!==undefined)
+		motion.setThreshold(a.cmd.threshold);
+}
+
+function waiting(waiting) {
+	if (waiting)
+		setButton("Waiting players...",false);	
+	else
+		setButton("Are you ready?",true,GameStates.ONLINE);	
+}
+
+function stopAll() {
+	audioplayer.stopAll();
+	track.stop();
+	motion.stop();
+	warning.stop();
+}
+
+function restartGame() {
+	stopAll();
+	gameState=GameStates.ONLINE;
+	playBack=0;
+	songName=0;
+	playingPlayers=0;
+	playingStates={};
+	otherPlayingPlayer=0;	
+	waiting(true);
+	updatePlayersList();
+}
+
+function join() {
+	setButton("Joining...",false,GameStates.CONNECTING);
+	socket.emit('join',{id:MYID,room:room});
+}
+
+function fail() {
+	stopAll();
+	setButton("Oh no!",false);
+	socket.emit('data',{
+		cmd:"fail",
+		player:playBack?otherPlayingPlayer:0
+	});
+	console.log(playBack?otherPlayingPlayer:0);
+}
+
+function win() {
+	stopAll();
+	audioplayer.play("win");
+	setButton("YOU WON!",true,GameStates.GAMEEND);
+}
+
+function lose() {
+	stopAll();
+	document.body.style.backgroundColor="#000";
+	document.body.style.color="#fff";
+	audioplayer.play("fail");
+	setButton("YOU LOSE!",false);
+}
+
+function draw() {
+	stopAll();
+	audioplayer.play("fail");
+	setButton("DRAW!",true,GameStates.GAMEEND);
+}
+
+function resetColors() {
+	document.body.style.backgroundColor=players[MYID].color.bg;
+	document.body.style.color=players[MYID].color.fg;
+}
+
+/* PROTOCOL */
+
+function updatePlayersList() {
+	var out="";
+	playingStates={idle:[],ready:[],fail:[],run:[]};
+	playingPlayers=0;
+	otherPlayingPlayer=0;
+	allIdle=true;
+	for (var a in players) {
+		out+="<div class='playerbox' style='background-color:"+players[a].color.bg+"'>"+playingStatesEmoji[players[a].state]+"</div>";
+		playingStates[players[a].state].push(a);
+		if ((a!=MYID)&&(players[a].state=="run")) otherPlayingPlayer=a;
+		playingPlayers++;
+		allIdle&=players[a].state=="idle";
+	}
+	document.getElementById("playerslist").innerHTML=out;
+	switch (gameState) {
+		case GameStates.ONLINE:{
+			waiting(playingStates.idle.length==1||!allIdle);
+			break;
+		}
+		case GameStates.WAITINGPLAYERS:{			
+			if (playingStates.ready.length==playingPlayers)
+				setButton("GO!",true,GameStates.READYTOGO);
+			break;
+		}
+		case GameStates.PLAYING:{
+			var togo=playingStates.run.length-1;
+			if (togo==0)
+				if (playingStates.run[0]==MYID) win();
+				else lose();
+			else if (togo<0) draw();
+			else setButton(togo+" to go!",false);
+			break;
+		}
+	}
+}
+
+/* INITIALIZATION */
+
+function loaded() {
+
+	setButton("Loading...",false,GameStates.LOADING);
+
+	audioplayer=new AudioPlayer();
+	audioplayer.load([
+		{id:"song0",url:"static/song0.mp3"},
+		{id:"fail",url:"static/fail.mp3"},
+		{id:"win",url:"static/win.mp3"}
+	],function(){
+			
+		motion=new MotionTracker();
+		track=new Track();
+		warning=new Warning();
+		setInterval(function(){
+			track.tick(trackPerformer)
+			audioplayer.tick();
+			warning.tick();
+		},16)
+
+		setButton("Join room",true,GameStates.OFFLINE);
+
+		socket.on('data', function(data) {
+			switch (data.cmd) {
+				case "ready":{
+					players[data.id].state="ready";
+					updatePlayersList();
+					break;
+				}
+				case "prepare":{
+					setButton("Getting ready...",false,GameStates.PREPARING);
+					songName=data.songName;
+					track.plug(data.track);
+					setButton("Waiting players...",false,GameStates.WAITINGPLAYERS);
+					socket.emit('data',{cmd:"ready"});
+					break;
+				}
+				case "run":{					
+					setButton("Good luck!",false);
+					gameState=GameStates.PLAYING;
+					for (var a in players) players[a].state="run";
+					playBack=data.player==MYID;
+					motion.play(motionPerformer);
+					track.play();
+					audioplayer.play(songName,true,playBack||alwaysPlayAudio?1:0);
+					warning.play(players[MYID].color.bg,players[MYID].color.fg,disableBlink,disableVibrate);
+					updatePlayersList();
+					break;
+				}			
+				case "fail":{
+					if (data.player) {
+						playBack=data.player==MYID;
+						if (!alwaysPlayAudio) audioplayer.volume(songName,playBack?1:0);
+					}
+					players[data.id].state="fail";
+					updatePlayersList();
+					break;
+				}
+				case "restart":{
+					resetColors();
+					for (var a in players) players[a].state="idle";
+					restartGame();
+					break;
+				}
+			}
+		});
+		socket.on('players', function(data) {
+		  players=data;
+		  restartGame();
+		  resetColors();
+		  updatePlayersList();
+		});
+		socket.on('join', function(data) {
+		  players[data.id]=data.data;
+		  updatePlayersList();
+		});
+		socket.on('left', function(data) {
+		  delete players[data.id];
+		  updatePlayersList();
+		});
+
+	});
+
+}
+
+</script>
+</html>
