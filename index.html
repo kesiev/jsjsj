@@ -164,14 +164,26 @@ function MotionTracker() {
 			this.running=0;
 		}
 	}
-	window.addEventListener("devicemotion",function(e){
-		if (out.running)
-			out.onMotion([
-				e.acceleration.x||0,
-				e.acceleration.y||0,
-				e.acceleration.z||0
-			]);
-	});
+
+	function registerEvents() {
+		window.addEventListener("devicemotion",function(e){
+			if (out.running)
+				out.onMotion([
+					e.acceleration.x||0,
+					e.acceleration.y||0,
+					e.acceleration.z||0
+				]);
+		});
+	}
+
+	if (typeof DeviceOrientationEvent.requestPermission === "function") {
+		DeviceOrientationEvent.requestPermission().then(permissionState => {
+			if (permissionState === "granted")
+				registerEvents();
+		}).catch(console.error);
+    } else
+		registerEvents();
+
 	return out;
 }
 

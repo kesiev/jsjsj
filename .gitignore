@@ -1,5 +1,6 @@
 .DS_Store
 package-lock.json
+certs/*.pem
 
 # Logs
 logs

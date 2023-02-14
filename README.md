@@ -8,16 +8,22 @@ Obviously you can also have fun playing it - but I suggest you to [buy and play 
 
 ## Setup
 
-Clone this repository and run:
+Make sure you've `openssl` installed. Clone this repository and run:
 
 ```
 # npm install
+...
+# openssl genrsa -out certs/key.pem
+...
+# openssl req -new -key certs/key.pem -out certs/csr.pem
+[Hit enter to the end]
+# openssl x509 -req -days 9999 -in certs/csr.pem -signkey certs/key.pem -out certs/cert.pem
 ...
 # node server.js
 Starting server on port 5001
 ```
 
-Find some friends connected to the same server network, point your modern browser&copy; to `http://<server address>:5001` and you're ready.
+Find some friends connected to the same server network, point your modern browser&copy; to `https://<server address>:5001`, accept the security warning, and you're ready.
 
 ## How to play
 

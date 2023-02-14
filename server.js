@@ -1,11 +1,15 @@
 // Dependencies
+const fs = require('fs');
 var express = require('express');
-var http = require('http');
+var https = require('https');
 var path = require('path');
 var socketIO = require('socket.io');
 
 var app = express();
-var server = http.Server(app);
+var server = https.createServer({
+	key: fs.readFileSync("certs/key.pem"),
+	cert: fs.readFileSync("certs/cert.pem"),
+},app);
 var io = socketIO(server);
 
 // Web server
